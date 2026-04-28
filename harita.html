@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Çevremdeki Popüler Mekanlar — Harita</title>
+<style>
+  :root {
+    --bg: #1A100E;
+    --panel: #2C1A17;
+    --gold: #DAA520;
+    --parchment: #F2E3C6;
+    --crimson: #8E1A20;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
+  body { background: var(--bg); color: var(--parchment); overflow: hidden; }
+
+  #map { position: absolute; inset: 0; }
+
+  .topbar {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 10; display: flex; gap: 8px; align-items: center;
+    background: rgba(26,16,14,0.92); backdrop-filter: blur(8px);
+    border: 1px solid var(--gold); border-radius: 999px;
+    padding: 8px 16px; max-width: calc(100vw - 24px);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+  }
+  .topbar h1 { font-size: 14px; font-weight: 600; color: var(--gold); white-space: nowrap; }
+  .topbar .stat { font-size: 13px; color: var(--parchment); opacity: 0.9; }
+  .topbar .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); }
+
+  .legend {
+    position: absolute; bottom: 16px; left: 16px; z-index: 10;
+    background: rgba(26,16,14,0.92); backdrop-filter: blur(8px);
+    border: 1px solid var(--gold); border-radius: 12px;
+    padding: 10px 14px; font-size: 12px; max-width: 240px;
+  }
+  .legend h3 { font-size: 12px; color: var(--gold); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+  .legend-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  .legend-icon { font-size: 16px; }
+
+  .status {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 5; background: rgba(26,16,14,0.95);
+    border: 1px solid var(--gold); border-radius: 12px;
+    padding: 24px 32px; text-align: center; max-width: 360px;
+  }
+  .status h2 { color: var(--gold); margin-bottom: 8px; }
+  .status p { font-size: 14px; line-height: 1.6; }
+  .status .err { color: #ff8a8a; }
+  .status button {
+    margin-top: 12px; padding: 8px 18px; border: 1px solid var(--gold);
+    background: transparent; color: var(--gold); border-radius: 999px;
+    font-weight: 600; cursor: pointer;
+  }
+  .status button:hover { background: var(--gold); color: var(--bg); }
+
+  .spinner {
+    width: 32px; height: 32px; margin: 0 auto 12px;
+    border: 3px solid rgba(218,165,32,0.2); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .gm-style .gm-style-iw-c {
+    background: var(--panel) !important;
+    border: 1px solid var(--gold) !important;
+    border-radius: 10px !important;
+    padding: 12px 16px !important;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.5) !important;
+  }
+  .gm-style .gm-style-iw-tc::after { background: var(--panel) !important; }
+  .gm-style .gm-style-iw-d { overflow: hidden !important; color: var(--parchment); }
+  .gm-style .gm-ui-hover-effect { filter: invert(1) brightness(2); }
+
+  .iw {
+    color: var(--parchment); font-family: 'Segoe UI', sans-serif;
+    min-width: 200px; max-width: 280px;
+  }
+  .iw .name { font-weight: 700; font-size: 15px; color: var(--gold); margin-bottom: 4px; }
+  .iw .meta { font-size: 12px; opacity: 0.85; display: flex; gap: 8px; align-items: center; }
+  .iw .star { color: #ffc341; }
+  .iw .addr { font-size: 11px; opacity: 0.7; margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="topbar">
+  <span class="dot"></span>
+  <h1>Çevredeki Popüler Mekanlar</h1>
+  <span class="stat" id="counter">— bulundu</span>
+</div>
+
+<div class="legend" id="legend">
+  <h3>İkonlar</h3>
+  <div class="legend-row"><span class="legend-icon">🍽️</span> Restoran</div>
+  <div class="legend-row"><span class="legend-icon">☕</span> Kafe</div>
+  <div class="legend-row"><span class="legend-icon">🍷</span> Bar</div>
+  <div class="legend-row"><span class="legend-icon">🏛️</span> Müze / Tarihi</div>
+  <div class="legend-row"><span class="legend-icon">🌳</span> Park</div>
+  <div class="legend-row"><span class="legend-icon">🛍️</span> Mağaza</div>
+</div>
+
+<div class="status" id="status">
+  <div class="spinner"></div>
+  <h2>Hazırlanıyor</h2>
+  <p>Konumunuz ve haritalar yükleniyor…</p>
+</div>
+
+<script>
+  // ============================================================
+  // Google Maps API anahtarı
+  // GÜVENLİK: Google Cloud Console'da bu anahtara HTTP referrer
+  // kısıtlaması koymayı UNUTMAYIN (sadece kendi domain'iniz).
+  // ============================================================
+  const GOOGLE_MAPS_API_KEY = 'AIzaSyAxVKASvyYuqUrw55Hk85JGl5T1AvrKWWk';
+
+  const RADIUS_METERS = 10000;
+  const MIN_REVIEWS = 0;
+
+  // Google place type → emoji ikon eşleştirmesi (öncelik sırası)
+  const TYPE_ICONS = [
+    ['cafe',           '☕'],
+    ['bakery',         '🥐'],
+    ['bar',            '🍷'],
+    ['night_club',     '🎵'],
+    ['restaurant',     '🍽️'],
+    ['meal_takeaway',  '🥡'],
+    ['food',           '🍴'],
+    ['museum',         '🏛️'],
+    ['art_gallery',    '🎨'],
+    ['tourist_attraction', '📸'],
+    ['church',         '⛪'],
+    ['mosque',         '🕌'],
+    ['park',           '🌳'],
+    ['zoo',            '🦁'],
+    ['aquarium',       '🐠'],
+    ['gym',            '💪'],
+    ['stadium',        '🏟️'],
+    ['movie_theater',  '🎬'],
+    ['library',        '📚'],
+    ['book_store',     '📖'],
+    ['shopping_mall',  '🛍️'],
+    ['clothing_store', '👕'],
+    ['supermarket',    '🛒'],
+    ['convenience_store','🏪'],
+    ['pharmacy',       '⚕️'],
+    ['hospital',       '🏥'],
+    ['bank',           '🏦'],
+    ['atm',            '💳'],
+    ['gas_station',    '⛽'],
+    ['lodging',        '🏨'],
+    ['school',         '🎓'],
+    ['university',     '🎓'],
+    ['store',          '🛍️'],
+  ];
+
+  function pickIcon(types) {
+    for (const [key, emoji] of TYPE_ICONS) {
+      if (types && types.includes(key)) return emoji;
+    }
+    return '📍';
+  }
+
+  function emojiMarkerIcon(emoji) {
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="48" height="56" viewBox="0 0 48 56">
+        <defs>
+          <filter id="s" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.45"/>
+          </filter>
+        </defs>
+        <path d="M24 2 C12 2 4 11 4 22 c0 14 20 32 20 32 s20-18 20-32 C44 11 36 2 24 2 z"
+              fill="#1A100E" stroke="#DAA520" stroke-width="2" filter="url(#s)"/>
+        <circle cx="24" cy="22" r="14" fill="#F2E3C6"/>
+        <text x="24" y="28" text-anchor="middle" font-size="20" font-family="Apple Color Emoji,Segoe UI Emoji,Noto Color Emoji,sans-serif">${emoji}</text>
+      </svg>`;
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  let map, infoWindow, userPos;
+
+  function setStatus(html, isError) {
+    const el = document.getElementById('status');
+    if (!html) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    el.innerHTML = html;
+    if (isError) el.querySelector('h2')?.classList.add('err');
+  }
+
+  function initMap() {
+    if (!navigator.geolocation) {
+      setStatus(`<h2 class="err">Konum desteklenmiyor</h2><p>Tarayıcınız konum hizmetini desteklemiyor.</p>`, true);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        userPos = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        startMap();
+      },
+      (err) => {
+        setStatus(`
+          <h2 class="err">Konum izni gerekli</h2>
+          <p>Çevredeki mekanları gösterebilmek için tarayıcınızdan konum erişimine izin vermeniz gerekiyor.</p>
+          <p style="margin-top:8px;font-size:12px;opacity:0.7">Hata: ${err.message}</p>
+          <button onclick="location.reload()">Tekrar Dene</button>
+        `, true);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }
+
+  function startMap() {
+    map = new google.maps.Map(document.getElementById('map'), {
+      center: userPos,
+      zoom: 16,
+      disableDefaultUI: false,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: true,
+      styles: [
+        { elementType: 'geometry', stylers: [{ color: '#2C1A17' }] },
+        { elementType: 'labels.text.stroke', stylers: [{ color: '#1A100E' }] },
+        { elementType: 'labels.text.fill', stylers: [{ color: '#D9C5A0' }] },
+        { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#3E2723' }] },
+        { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1A100E' }] },
+        { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d2230' }] },
+        { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+        { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+      ],
+    });
+
+    infoWindow = new google.maps.InfoWindow();
+
+    new google.maps.Marker({
+      position: userPos,
+      map,
+      title: 'Buradasınız',
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 10,
+        fillColor: '#DAA520',
+        fillOpacity: 1,
+        strokeColor: '#1A100E',
+        strokeWeight: 3,
+      },
+      zIndex: 9999,
+    });
+
+    new google.maps.Circle({
+      strokeColor: '#DAA520',
+      strokeOpacity: 0.6,
+      strokeWeight: 1.5,
+      fillColor: '#DAA520',
+      fillOpacity: 0.06,
+      map,
+      center: userPos,
+      radius: RADIUS_METERS,
+    });
+
+    searchPlaces();
+  }
+
+  // Status code → kullanıcıya gösterilecek mesaj
+  const STATUS_MESSAGES = {
+    REQUEST_DENIED: {
+      title: 'API Erişimi Reddedildi',
+      msg: 'Anahtar geçersiz, kısıtlanmış ya da "Places API" etkin değil. Google Cloud Console\'da kontrol edin: 1) "Places API" (legacy) etkin mi, 2) faturalandırma hesabı bağlı mı, 3) anahtarın HTTP referrer kısıtlaması bu domain\'i içeriyor mu.',
+    },
+    OVER_QUERY_LIMIT: {
+      title: 'Kota Aşıldı',
+      msg: 'Günlük/saniyelik istek sınırı aşıldı. Birkaç dakika sonra tekrar deneyin.',
+    },
+    INVALID_REQUEST: {
+      title: 'Geçersiz İstek',
+      msg: 'Sorgu parametreleri hatalı.',
+    },
+    UNKNOWN_ERROR: {
+      title: 'Sunucu Hatası',
+      msg: 'Google sunucusunda geçici hata. Tekrar deneyin.',
+    },
+  };
+
+  function searchPlaces() {
+    const service = new google.maps.places.PlacesService(map);
+
+    const request = {
+      location: userPos,
+      radius: RADIUS_METERS,
+    };
+
+    const allResults = [];
+    let lastStatus = null;
+
+    function handlePage(results, status, pagination) {
+      lastStatus = status;
+      console.log('[Places] Status:', status, 'Results:', results?.length || 0);
+
+      if (status === google.maps.places.PlacesServiceStatus.OK) {
+        allResults.push(...(results || []));
+      }
+
+      if (pagination && pagination.hasNextPage) {
+        setTimeout(() => pagination.nextPage(), 800);
+      } else {
+        if (allResults.length === 0 && lastStatus !== google.maps.places.PlacesServiceStatus.OK
+            && lastStatus !== google.maps.places.PlacesServiceStatus.ZERO_RESULTS) {
+          // Legacy API başarısız → yeni Places API'yi dene
+          console.warn('Legacy Places API başarısız, yeni Places API deneniyor…');
+          tryNewPlacesApi(lastStatus);
+          return;
+        }
+        renderResults(allResults);
+      }
+    }
+
+    service.nearbySearch(request, handlePage);
+  }
+
+  // Yeni Places API (REST v1) — legacy başarısız olursa fallback
+  async function tryNewPlacesApi(legacyStatus) {
+    try {
+      const res = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': GOOGLE_MAPS_API_KEY,
+          'X-Goog-FieldMask': 'places.displayName,places.location,places.types,places.rating,places.userRatingCount,places.formattedAddress',
+        },
+        body: JSON.stringify({
+          maxResultCount: 20,
+          locationRestriction: {
+            circle: {
+              center: { latitude: userPos.lat, longitude: userPos.lng },
+              radius: RADIUS_METERS,
+            },
+          },
+        }),
+      });
+
+      const data = await res.json();
+      console.log('[Places New API]', res.status, data);
+
+      if (!res.ok) {
+        const reason = data?.error?.message || `HTTP ${res.status}`;
+        showApiError(legacyStatus, reason);
+        return;
+      }
+
+      // Yeni API formatını eski API formatına dönüştür
+      const places = (data.places || []).map(p => ({
+        name: p.displayName?.text || 'İsimsiz',
+        geometry: {
+          location: new google.maps.LatLng(p.location.latitude, p.location.longitude),
+        },
+        types: p.types || [],
+        rating: p.rating || 0,
+        user_ratings_total: p.userRatingCount || 0,
+        vicinity: p.formattedAddress || '',
+      }));
+
+      renderResults(places);
+    } catch (e) {
+      console.error('New Places API error:', e);
+      showApiError(legacyStatus, e.message);
+    }
+  }
+
+  function showApiError(status, extra) {
+    const info = STATUS_MESSAGES[status] || STATUS_MESSAGES.UNKNOWN_ERROR;
+    setStatus(`
+      <h2 class="err">${info.title}</h2>
+      <p>${info.msg}</p>
+      <p style="margin-top:8px;font-size:11px;opacity:0.6">Detay: ${status}${extra ? ' / ' + escapeHtml(extra) : ''}</p>
+      <button onclick="location.reload()">Tekrar Dene</button>
+    `, true);
+  }
+
+  function renderResults(places) {
+    const filtered = places.filter(p => (p.user_ratings_total || 0) > MIN_REVIEWS);
+
+    document.getElementById('counter').textContent = `${filtered.length} popüler mekan`;
+    setStatus(null);
+
+    if (filtered.length === 0) {
+      setStatus(`
+        <h2>Sonuç yok</h2>
+        <p>${(RADIUS_METERS/1000).toFixed(1)} km içinde${MIN_REVIEWS > 0 ? ` Google'da ${MIN_REVIEWS}'den fazla yorumu olan` : ''} mekan bulunamadı.</p>
+        <p style="margin-top:8px;font-size:12px;opacity:0.7">Toplam ${places.length} mekan döndü, ${MIN_REVIEWS > 0 ? `yorum filtresi geçen` : 'gösterilebilir'} 0 tane.</p>
+        <button onclick="document.getElementById('status').style.display='none'">Kapat</button>
+      `);
+      return;
+    }
+
+    filtered.forEach(place => {
+      const emoji = pickIcon(place.types);
+      const marker = new google.maps.Marker({
+        position: place.geometry.location,
+        map,
+        title: place.name,
+        icon: {
+          url: emojiMarkerIcon(emoji),
+          scaledSize: new google.maps.Size(40, 47),
+          anchor: new google.maps.Point(20, 47),
+        },
+      });
+
+      marker.addListener('click', () => {
+        const html = `
+          <div class="iw">
+            <div class="name">${escapeHtml(place.name)}</div>
+            <div class="meta">
+              <span class="star">★</span>
+              <span>${(place.rating || 0).toFixed(1)}</span>
+              <span>·</span>
+              <span>${place.user_ratings_total} yorum</span>
+            </div>
+            ${place.vicinity ? `<div class="addr">${escapeHtml(place.vicinity)}</div>` : ''}
+          </div>`;
+        infoWindow.setContent(html);
+        infoWindow.open({ anchor: marker, map });
+      });
+    });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  (function loadMaps() {
+    const s = document.createElement('script');
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places&callback=initMap&language=tr`;
+    s.async = true;
+    s.defer = true;
+    document.head.appendChild(s);
+  })();
+</script>
+</body>
+</html>
